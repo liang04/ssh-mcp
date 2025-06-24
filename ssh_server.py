@@ -271,6 +271,156 @@ def execute_interactive_command(command: str, input_data: str = "", timeout: int
         if client:
             client.close()
 
+@mcp.tool()
+def upload_file(local_path: str, remote_path: str, timeout: int = 60) -> Dict[str, Any]:
+    """
+    使用SFTP协议上传文件到远程服务器
+    
+    Args:
+        local_path: 本地文件路径
+        remote_path: 远程服务器文件路径
+        timeout: 传输超时时间（秒），默认60秒
+    
+    Returns:
+        Dict包含上传结果：
+        - success: 是否成功上传
+        - local_path: 本地文件路径
+        - remote_path: 远程文件路径
+        - file_size: 文件大小（字节）
+        - error: 错误信息（如果有）
+    """
+    client = None
+    sftp = None
+    try:
+        # 检查本地文件是否存在
+        if not os.path.exists(local_path):
+            error_msg = f"本地文件不存在: {local_path}"
+            logger.error(error_msg)
+            return {
+                "success": False,
+                "local_path": local_path,
+                "remote_path": remote_path,
+                "file_size": 0,
+                "error": error_msg
+            }
+        
+        # 获取文件大小
+        file_size = os.path.getsize(local_path)
+        
+        # 建立SSH连接
+        client = ssh_manager.create_client()
+        ssh_manager.connect(client)
+        
+        # 创建SFTP客户端
+        sftp = client.open_sftp()
+        
+        # 设置超时
+        sftp.get_channel().settimeout(timeout)
+        
+        # 确保远程目录存在
+        remote_dir = os.path.dirname(remote_path)
+        if remote_dir:
+            try:
+                # 尝试创建远程目录（如果不存在）
+                stdin, stdout, stderr = client.exec_command(f'mkdir -p "{remote_dir}"')
+                stdout.channel.recv_exit_status()  # 等待命令完成
+            except Exception as e:
+                logger.warning(f"创建远程目录时出现警告: {e}")
+        
+        # 上传文件
+        logger.info(f"开始上传文件: {local_path} -> {remote_path} ({file_size} 字节)")
+        sftp.put(local_path, remote_path)
+        
+        # 验证上传是否成功
+        try:
+            remote_stat = sftp.stat(remote_path)
+            if remote_stat.st_size == file_size:
+                logger.info(f"文件上传成功: {local_path} -> {remote_path}")
+                return {
+                    "success": True,
+                    "local_path": local_path,
+                    "remote_path": remote_path,
+                    "file_size": file_size,
+                    "error": None
+                }
+            else:
+                error_msg = f"文件上传验证失败: 远程文件大小({remote_stat.st_size})与本地文件大小({file_size})不匹配"
+                logger.error(error_msg)
+                return {
+                    "success": False,
+                    "local_path": local_path,
+                    "remote_path": remote_path,
+                    "file_size": file_size,
+                    "error": error_msg
+                }
+        except Exception as e:
+            error_msg = f"无法验证远程文件: {str(e)}"
+            logger.warning(error_msg)
+            # 即使验证失败，我们仍然认为上传可能成功了
+            return {
+                "success": True,
+                "local_path": local_path,
+                "remote_path": remote_path,
+                "file_size": file_size,
+                "error": f"上传完成但验证失败: {error_msg}"
+            }
+        
+    except paramiko.AuthenticationException:
+        error_msg = "SSH认证失败，请检查用户名和密码/密钥"
+        logger.error(error_msg)
+        return {
+            "success": False,
+            "local_path": local_path,
+            "remote_path": remote_path,
+            "file_size": 0,
+            "error": error_msg
+        }
+    except paramiko.SSHException as e:
+        error_msg = f"SSH连接错误: {str(e)}"
+        logger.error(error_msg)
+        return {
+            "success": False,
+            "local_path": local_path,
+            "remote_path": remote_path,
+            "file_size": 0,
+            "error": error_msg
+        }
+    except FileNotFoundError:
+        error_msg = f"本地文件未找到: {local_path}"
+        logger.error(error_msg)
+        return {
+            "success": False,
+            "local_path": local_path,
+            "remote_path": remote_path,
+            "file_size": 0,
+            "error": error_msg
+        }
+    except PermissionError:
+        error_msg = f"权限错误: 无法访问本地文件 {local_path} 或远程路径 {remote_path}"
+        logger.error(error_msg)
+        return {
+            "success": False,
+            "local_path": local_path,
+            "remote_path": remote_path,
+            "file_size": 0,
+            "error": error_msg
+        }
+    except Exception as e:
+        error_msg = f"文件上传失败: {str(e)}"
+        logger.error(error_msg)
+        return {
+            "success": False,
+            "local_path": local_path,
+            "remote_path": remote_path,
+            "file_size": 0,
+            "error": error_msg
+        }
+    finally:
+        if sftp:
+            sftp.close()
+        if client:
+            client.close()
+
 def main():
     """主函数入口点"""
     try:
