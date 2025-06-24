@@ -1,0 +1,20 @@
+[project]
+name = "ssh-mcp-server"
+version = "0.1.0"
+description = "SSH MCP Server for remote command execution"
+requires-python = ">=3.10"
+dependencies = [
+    "paramiko>=3.0.0",
+    "mcp>=1.0.0",
+]
+
+[tool.uv]
+dev-dependencies = [
+    "pytest>=7.0.0",
+    "pytest-asyncio>=0.21.0",
+]
+
+[[tool.uv.index]]
+name = "tsinghua"
+url = "https://pypi.tuna.tsinghua.edu.cn/simple"
+default = true
