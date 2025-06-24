@@ -278,13 +278,15 @@ def upload_file(local_path: str, remote_path: str, timeout: int = 60) -> Dict[st
     
     Args:
         local_path: 本地文件路径
-        remote_path: 远程服务器文件路径
+                   推荐使用绝对路径以避免路径解析问题
+                   如果使用相对路径，将基于MCP服务器的工作目录进行解析
+        remote_path: 远程服务器文件路径（绝对路径）
         timeout: 传输超时时间（秒），默认60秒
     
     Returns:
         Dict包含上传结果：
         - success: 是否成功上传
-        - local_path: 本地文件路径
+        - local_path: 本地文件路径（转换为绝对路径后）
         - remote_path: 远程文件路径
         - file_size: 文件大小（字节）
         - error: 错误信息（如果有）
@@ -292,9 +294,12 @@ def upload_file(local_path: str, remote_path: str, timeout: int = 60) -> Dict[st
     client = None
     sftp = None
     try:
+        # 将本地路径转换为绝对路径，提高兼容性
+        local_path = os.path.abspath(local_path)
+        
         # 检查本地文件是否存在
         if not os.path.exists(local_path):
-            error_msg = f"本地文件不存在: {local_path}"
+            error_msg = f"本地文件不存在: {local_path} (已转换为绝对路径，请确认文件路径是否正确)"
             logger.error(error_msg)
             return {
                 "success": False,
@@ -386,7 +391,7 @@ def upload_file(local_path: str, remote_path: str, timeout: int = 60) -> Dict[st
             "error": error_msg
         }
     except FileNotFoundError:
-        error_msg = f"本地文件未找到: {local_path}"
+        error_msg = f"本地文件未找到: {local_path} (请确认使用正确的绝对路径)"
         logger.error(error_msg)
         return {
             "success": False,
