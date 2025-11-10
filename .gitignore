@@ -128,8 +128,11 @@ id_ed25519*
 # Logs
 *.log
 logs/
+exec_log.json
 
 # Temporary files
 *.tmp
 *.temp
 .tmp/ 
+
+.claude

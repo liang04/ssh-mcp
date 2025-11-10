@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "ssh-server": {
+      "command": "python",
+      "args": ["ssh_server.py"],
+      "cwd": "E:\\Robustel\\gitlab\\lvliang\\ssh-mcp",
+      "env": {
+        "SSH_HOST": "192.168.0.1",
+        "SSH_USERNAME": "robustel",
+        "SSH_PASSWORD": "Robustel.123"
+      }
+    }
+  }
+}

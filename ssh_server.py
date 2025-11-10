@@ -6,13 +6,91 @@ from mcp.server.fastmcp import FastMCP, Context
 from mcp.types import TextContent
 import io
 import logging
+import json
+import time
+from threading import Lock
+from pathlib import Path
+
+# 加载 .env 文件（如果存在）
+def load_env_file():
+    """加载 .env 文件到环境变量"""
+    env_file = Path(__file__).parent / '.env'
+    if env_file.exists():
+        with open(env_file, 'r', encoding='utf-8') as f:
+            for line in f:
+                line = line.strip()
+                if line and not line.startswith('#') and '=' in line:
+                    key, value = line.split('=', 1)
+                    # 只有在环境变量未设置时才从 .env 文件读取
+                    if key.strip() not in os.environ:
+                        os.environ[key.strip()] = value.strip()
+        logger.info(f"已加载配置文件: {env_file}")
 
 # 配置日志
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# 加载环境变量
+load_env_file()
+
 # 创建 MCP 服务器
 mcp = FastMCP(name="SSH Server", description="SSH连接管理和命令执行服务器")
+
+class ExecLogManager:
+    """命令执行日志管理类"""
+    
+    def __init__(self):
+        self.save_log = os.getenv('SAVE_EXEC_LOG', 'false').lower() in ('true', '1', 'yes')
+        self.log_file = os.getenv('EXEC_LOG_FILE', 'exec_log.json')
+        self.lock = Lock()
+        
+        # 如果启用日志且文件不存在，初始化为空数组
+        if self.save_log and not os.path.exists(self.log_file):
+            self._initialize_log_file()
+    
+    def _initialize_log_file(self):
+        """初始化日志文件"""
+        try:
+            with open(self.log_file, 'w', encoding='utf-8') as f:
+                json.dump([], f)
+            logger.info(f"初始化日志文件: {self.log_file}")
+        except Exception as e:
+            logger.error(f"初始化日志文件失败: {e}")
+    
+    def save_execution_log(self, command: str, result: Dict[str, Any]):
+        """保存命令执行日志"""
+        if not self.save_log:
+            return
+        
+        try:
+            with self.lock:
+                # 读取现有日志
+                logs = []
+                if os.path.exists(self.log_file):
+                    try:
+                        with open(self.log_file, 'r', encoding='utf-8') as f:
+                            logs = json.load(f)
+                    except (json.JSONDecodeError, FileNotFoundError):
+                        logs = []
+                
+                # 构建日志条目
+                log_entry = {
+                    "command": command,
+                    "result": "success" if result.get("success") else "failure",
+                    "output": result.get("stdout", "") or result.get("stderr", "") or result.get("error", ""),
+                    "timestamp": int(time.time())
+                }
+                
+                # 追加新日志
+                logs.append(log_entry)
+                
+                # 写回文件
+                with open(self.log_file, 'w', encoding='utf-8') as f:
+                    json.dump(logs, f, ensure_ascii=False, indent=2)
+                
+                logger.debug(f"已保存命令执行日志: {command}")
+        except Exception as e:
+            logger.error(f"保存执行日志失败: {e}")
 
 class SSHConnection:
     """SSH连接管理类"""
@@ -66,6 +144,9 @@ class SSHConnection:
 # 全局SSH连接管理器
 ssh_manager = SSHConnection()
 
+# 全局日志管理器
+log_manager = ExecLogManager()
+
 @mcp.tool()
 def execute_command(command: str, timeout: int = 30) -> Dict[str, Any]:
     """
@@ -105,38 +186,45 @@ def execute_command(command: str, timeout: int = 30) -> Dict[str, Any]:
         }
         
         logger.info(f"命令执行完成: '{command}', 退出码: {exit_code}")
+        log_manager.save_execution_log(command, result)
         return result
         
     except paramiko.AuthenticationException:
         error_msg = "SSH认证失败，请检查用户名和密码/密钥"
         logger.error(error_msg)
-        return {
+        result = {
             "success": False,
             "exit_code": -1,
             "stdout": "",
             "stderr": "",
             "error": error_msg
         }
+        log_manager.save_execution_log(command, result)
+        return result
     except paramiko.SSHException as e:
         error_msg = f"SSH连接错误: {str(e)}"
         logger.error(error_msg)
-        return {
+        result = {
             "success": False,
             "exit_code": -1,
             "stdout": "",
             "stderr": "",
             "error": error_msg
         }
+        log_manager.save_execution_log(command, result)
+        return result
     except Exception as e:
         error_msg = f"命令执行失败: {str(e)}"
         logger.error(error_msg)
-        return {
+        result = {
             "success": False,
             "exit_code": -1,
             "stdout": "",
             "stderr": "",
             "error": error_msg
         }
+        log_manager.save_execution_log(command, result)
+        return result
     finally:
         if client:
             client.close()
@@ -255,18 +343,21 @@ def execute_interactive_command(command: str, input_data: str = "", timeout: int
         }
         
         logger.info(f"交互式命令执行完成: '{command}', 退出码: {exit_code}")
+        log_manager.save_execution_log(command, result)
         return result
         
     except Exception as e:
         error_msg = f"交互式命令执行失败: {str(e)}"
         logger.error(error_msg)
-        return {
+        result = {
             "success": False,
             "exit_code": -1,
             "stdout": "",
             "stderr": "",
             "error": error_msg
         }
+        log_manager.save_execution_log(command, result)
+        return result
     finally:
         if client:
             client.close()

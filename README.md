@@ -48,28 +48,6 @@ SSH_PORT=22  # 默认为22
 
 **注意**：必须设置 `SSH_PASSWORD` 或 `SSH_KEY_PATH` 其中之一。如果同时设置，将优先使用密钥认证。
 
-## Cursor 集成
-
-在 `.cursor/mcp.json` 中配置：
-
-```json
-{
-    "mcpServers": {
-        "SSH Server (cmd)": {
-            "command": "cmd",
-            "args": [
-                "/c",
-                "cd /d E:\\Robustel\\gitlab\\lvliang\\ssh-mcp && python ssh_server.py"
-            ],
-            "env": {
-                "SSH_HOST": "192.168.2.1", 
-                "SSH_USERNAME": "root",
-                "SSH_PASSWORD": "your-password"
-            }
-        }
-    }
-}
-```
 
 ## 可用工具
 
