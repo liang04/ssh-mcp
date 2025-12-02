@@ -410,32 +410,6 @@ def execute_command(command: str, timeout: int = 30, connection_name: Optional[s
             client.close()
 
 @mcp.tool()
-def get_command_output(command: str, timeout: int = 30, connection_name: Optional[str] = None) -> str:
-    """
-    执行命令并仅返回标准输出内容
-    
-    Args:
-        command: 要执行的shell命令
-        timeout: 命令执行超时时间（秒），默认30秒
-        connection_name: SSH连接名称，如果不指定则使用默认连接
-    
-    Returns:
-        命令的标准输出内容
-    """
-    result = execute_command(command, timeout, connection_name)
-    
-    if result["success"]:
-        return result["stdout"]
-    else:
-        # 如果命令失败，返回错误信息
-        error_info = f"命令执行失败 (退出码: {result['exit_code']})"
-        if result["stderr"]:
-            error_info += f"\n错误输出: {result['stderr']}"
-        if result["error"]:
-            error_info += f"\n错误信息: {result['error']}"
-        return error_info
-
-@mcp.tool()
 def check_ssh_connection(connection_name: Optional[str] = None) -> Dict[str, Any]:
     """
     检查SSH连接状态

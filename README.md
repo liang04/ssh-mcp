@@ -131,17 +131,6 @@ EXEC_LOG_FILE=exec_log.json
 }
 ```
 
-### 3. get_command_output
-
-执行命令并仅返回标准输出内容。
-
-**参数**：
-- `command` (str): 要执行的shell命令
-- `timeout` (int, 可选): 超时时间，默认30秒
-- `connection_name` (str, 可选): 连接名称，不指定则使用默认连接
-
-**返回**：命令的标准输出内容（字符串）
-
 ### 4. check_ssh_connection
 
 检查SSH连接状态。
@@ -196,6 +185,68 @@ EXEC_LOG_FILE=exec_log.json
 }
 ```
 
+### 7. download_file
+
+使用SFTP协议从远程服务器下载文件到本地。
+
+**参数**：
+- `remote_path` (str): 远程服务器文件路径（绝对路径）
+- `local_path` (str): 本地文件保存路径
+- `timeout` (int, 可选): 传输超时时间，默认60秒
+- `connection_name` (str, 可选): 连接名称，不指定则使用默认连接
+
+**返回**：
+```json
+{
+  "success": true/false,
+  "remote_path": "/path/to/remote/file",
+  "local_path": "/path/to/local/file",
+  "file_size": 1024,
+  "connection": "prod",
+  "error": null
+}
+```
+
+### 8. list_directory
+
+获取远程目录的结构化文件列表。
+
+**参数**：
+- `remote_path` (str, 可选): 远程目录路径，默认为当前目录 "."
+- `timeout` (int, 可选): 操作超时时间，默认30秒
+- `connection_name` (str, 可选): 连接名称，不指定则使用默认连接
+
+**返回**：
+```json
+{
+  "success": true/false,
+  "path": "/path/to/directory",
+  "files": [
+    {
+      "name": "example.txt",
+      "type": "file",
+      "size": 1024,
+      "permissions": "rw-r--r--",
+      "modified_time": 1701234567,
+      "owner_uid": 1000,
+      "group_gid": 1000
+    },
+    {
+      "name": "subdir",
+      "type": "directory",
+      "size": null,
+      "permissions": "rwxr-xr-x",
+      "modified_time": 1701234567,
+      "owner_uid": 1000,
+      "group_gid": 1000
+    }
+  ],
+  "total_count": 2,
+  "connection": "prod",
+  "error": null
+}
+```
+
 ## 使用示例
 
 ### 列出所有连接
@@ -207,6 +258,39 @@ print(f"共有 {connections['total_count']} 个连接")
 print(f"默认连接: {connections['default_connection']}")
 ```
 
+### 文件下载
+
+```python
+# 从生产环境下载文件
+result = download_file(
+    remote_path="/path/to/remote/file.txt",
+    local_path="/path/to/local/file.txt",
+    connection_name="prod"
+)
+if result["success"]:
+    print(f"文件下载成功: {result['file_size']} 字节")
+```
+
+### 目录列表
+
+```python
+# 列出生产环境的目录内容
+result = list_directory(
+    remote_path="/var/log",
+    connection_name="prod"
+)
+if result["success"]:
+    print(f"目录包含 {result['total_count']} 项:")
+    for file in result["files"]:
+        file_type = file["type"]
+        name = file["name"]
+        if file_type == "file":
+            size = file["size"]
+            print(f"  [文件] {name} ({size} 字节)")
+        elif file_type == "directory":
+            print(f"  [目录] {name}/")
+```
+
 ### 使用默认连接
 
 ```python
@@ -214,9 +298,6 @@ print(f"默认连接: {connections['default_connection']}")
 result = execute_command("ls -la")
 print(result["stdout"])
 
-# 获取系统信息
-system_info = get_command_output("uname -a")
-print(system_info)
 ```
 
 ### 使用指定连接
