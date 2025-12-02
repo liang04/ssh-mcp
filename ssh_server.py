@@ -769,6 +769,356 @@ def upload_file(local_path: str, remote_path: str, timeout: int = 60, connection
         if client:
             client.close()
 
+@mcp.tool()
+def download_file(remote_path: str, local_path: str, timeout: int = 60, connection_name: Optional[str] = None) -> Dict[str, Any]:
+    """
+    使用SFTP协议从远程服务器下载文件到本地
+    
+    Args:
+        remote_path: 远程服务器文件路径（绝对路径）
+        local_path: 本地文件保存路径
+                   推荐使用绝对路径以避免路径解析问题
+                   如果使用相对路径，将基于MCP服务器的工作目录进行解析
+        timeout: 传输超时时间（秒），默认60秒
+        connection_name: SSH连接名称，如果不指定则使用默认连接
+    
+    Returns:
+        Dict包含下载结果：
+        - success: 是否成功下载
+        - remote_path: 远程文件路径
+        - local_path: 本地文件路径（转换为绝对路径后）
+        - file_size: 文件大小（字节）
+        - connection: 使用的连接名称
+        - error: 错误信息（如果有）
+    """
+    client = None
+    sftp = None
+    try:
+        # 将本地路径转换为绝对路径，提高兼容性
+        local_path = os.path.abspath(local_path)
+        
+        # 建立SSH连接
+        connection = ssh_manager.get_connection(connection_name)
+        client = connection.create_client()
+        connection.connect(client)
+        
+        # 创建SFTP客户端
+        sftp = client.open_sftp()
+        
+        # 设置超时
+        sftp.get_channel().settimeout(timeout)
+        
+        # 检查远程文件是否存在
+        try:
+            remote_stat = sftp.stat(remote_path)
+            file_size = remote_stat.st_size
+        except FileNotFoundError:
+            error_msg = f"远程文件不存在: {remote_path}"
+            logger.error(error_msg)
+            return {
+                "success": False,
+                "remote_path": remote_path,
+                "local_path": local_path,
+                "file_size": 0,
+                "connection": connection.name,
+                "error": error_msg
+            }
+        
+        # 确保本地目录存在
+        local_dir = os.path.dirname(local_path)
+        if local_dir and not os.path.exists(local_dir):
+            try:
+                os.makedirs(local_dir, exist_ok=True)
+                logger.info(f"创建本地目录: {local_dir}")
+            except Exception as e:
+                error_msg = f"创建本地目录失败: {e}"
+                logger.error(error_msg)
+                return {
+                    "success": False,
+                    "remote_path": remote_path,
+                    "local_path": local_path,
+                    "file_size": 0,
+                    "connection": connection.name,
+                    "error": error_msg
+                }
+        
+        # 下载文件
+        logger.info(f"开始下载文件 [{connection.name}]: {remote_path} -> {local_path} ({file_size} 字节)")
+        sftp.get(remote_path, local_path)
+        
+        # 验证下载是否成功
+        if os.path.exists(local_path):
+            local_size = os.path.getsize(local_path)
+            if local_size == file_size:
+                logger.info(f"文件下载成功 [{connection.name}]: {remote_path} -> {local_path}")
+                return {
+                    "success": True,
+                    "remote_path": remote_path,
+                    "local_path": local_path,
+                    "file_size": file_size,
+                    "connection": connection.name,
+                    "error": None
+                }
+            else:
+                error_msg = f"文件下载验证失败: 本地文件大小({local_size})与远程文件大小({file_size})不匹配"
+                logger.error(error_msg)
+                return {
+                    "success": False,
+                    "remote_path": remote_path,
+                    "local_path": local_path,
+                    "file_size": file_size,
+                    "connection": connection.name,
+                    "error": error_msg
+                }
+        else:
+            error_msg = "下载后本地文件不存在"
+            logger.error(error_msg)
+            return {
+                "success": False,
+                "remote_path": remote_path,
+                "local_path": local_path,
+                "file_size": file_size,
+                "connection": connection.name,
+                "error": error_msg
+            }
+        
+    except ValueError as e:
+        error_msg = str(e)
+        logger.error(error_msg)
+        return {
+            "success": False,
+            "remote_path": remote_path,
+            "local_path": local_path,
+            "file_size": 0,
+            "connection": connection_name,
+            "error": error_msg
+        }
+    except paramiko.AuthenticationException:
+        error_msg = "SSH认证失败，请检查用户名和密码/密钥"
+        logger.error(error_msg)
+        return {
+            "success": False,
+            "remote_path": remote_path,
+            "local_path": local_path,
+            "file_size": 0,
+            "connection": connection_name,
+            "error": error_msg
+        }
+    except paramiko.SSHException as e:
+        error_msg = f"SSH连接错误: {str(e)}"
+        logger.error(error_msg)
+        return {
+            "success": False,
+            "remote_path": remote_path,
+            "local_path": local_path,
+            "file_size": 0,
+            "connection": connection_name,
+            "error": error_msg
+        }
+    except PermissionError:
+        error_msg = f"权限错误: 无法访问远程文件 {remote_path} 或本地路径 {local_path}"
+        logger.error(error_msg)
+        return {
+            "success": False,
+            "remote_path": remote_path,
+            "local_path": local_path,
+            "file_size": 0,
+            "connection": connection_name,
+            "error": error_msg
+        }
+    except Exception as e:
+        error_msg = f"文件下载失败: {str(e)}"
+        logger.error(error_msg)
+        return {
+            "success": False,
+            "remote_path": remote_path,
+            "local_path": local_path,
+            "file_size": 0,
+            "connection": connection_name,
+            "error": error_msg
+        }
+    finally:
+        if sftp:
+            sftp.close()
+        if client:
+            client.close()
+
+@mcp.tool()
+def list_directory(remote_path: str = ".", timeout: int = 30, connection_name: Optional[str] = None) -> Dict[str, Any]:
+    """
+    获取远程目录的结构化文件列表
+    
+    Args:
+        remote_path: 远程目录路径，默认为当前目录 "."
+        timeout: 操作超时时间（秒），默认30秒
+        connection_name: SSH连接名称，如果不指定则使用默认连接
+    
+    Returns:
+        Dict包含目录列表结果：
+        - success: 是否成功获取
+        - path: 目录路径
+        - files: 文件列表，每个文件包含：
+            - name: 文件名
+            - type: 类型 (file/directory/symlink/other)
+            - size: 文件大小（字节，仅文件类型）
+            - permissions: 权限字符串（如 "rwxr-xr-x"）
+            - modified_time: 修改时间（Unix时间戳）
+            - owner_uid: 所有者UID
+            - group_gid: 组GID
+        - total_count: 文件总数
+        - connection: 使用的连接名称
+        - error: 错误信息（如果有）
+    """
+    client = None
+    sftp = None
+    try:
+        # 建立SSH连接
+        connection = ssh_manager.get_connection(connection_name)
+        client = connection.create_client()
+        connection.connect(client)
+        
+        # 创建SFTP客户端
+        sftp = client.open_sftp()
+        
+        # 设置超时
+        sftp.get_channel().settimeout(timeout)
+        
+        # 获取目录列表
+        logger.info(f"获取目录列表 [{connection.name}]: {remote_path}")
+        
+        try:
+            # 列出目录内容
+            file_attrs = sftp.listdir_attr(remote_path)
+        except FileNotFoundError:
+            error_msg = f"远程目录不存在: {remote_path}"
+            logger.error(error_msg)
+            return {
+                "success": False,
+                "path": remote_path,
+                "files": [],
+                "total_count": 0,
+                "connection": connection.name,
+                "error": error_msg
+            }
+        except PermissionError:
+            error_msg = f"权限不足，无法访问目录: {remote_path}"
+            logger.error(error_msg)
+            return {
+                "success": False,
+                "path": remote_path,
+                "files": [],
+                "total_count": 0,
+                "connection": connection.name,
+                "error": error_msg
+            }
+        
+        # 解析文件属性
+        files = []
+        for attr in file_attrs:
+            import stat
+            
+            # 判断文件类型
+            if stat.S_ISDIR(attr.st_mode):
+                file_type = "directory"
+            elif stat.S_ISREG(attr.st_mode):
+                file_type = "file"
+            elif stat.S_ISLNK(attr.st_mode):
+                file_type = "symlink"
+            else:
+                file_type = "other"
+            
+            # 转换权限为字符串格式
+            def mode_to_permissions(mode):
+                """将数字权限转换为字符串格式"""
+                perms = ""
+                # 所有者权限
+                perms += "r" if mode & stat.S_IRUSR else "-"
+                perms += "w" if mode & stat.S_IWUSR else "-"
+                perms += "x" if mode & stat.S_IXUSR else "-"
+                # 组权限
+                perms += "r" if mode & stat.S_IRGRP else "-"
+                perms += "w" if mode & stat.S_IWGRP else "-"
+                perms += "x" if mode & stat.S_IXGRP else "-"
+                # 其他用户权限
+                perms += "r" if mode & stat.S_IROTH else "-"
+                perms += "w" if mode & stat.S_IWOTH else "-"
+                perms += "x" if mode & stat.S_IXOTH else "-"
+                return perms
+            
+            file_info = {
+                "name": attr.filename,
+                "type": file_type,
+                "size": attr.st_size if file_type == "file" else None,
+                "permissions": mode_to_permissions(attr.st_mode),
+                "modified_time": attr.st_mtime,
+                "owner_uid": attr.st_uid,
+                "group_gid": attr.st_gid
+            }
+            files.append(file_info)
+        
+        # 按名称排序（目录在前，文件在后）
+        files.sort(key=lambda x: (x["type"] != "directory", x["name"]))
+        
+        logger.info(f"成功获取目录列表 [{connection.name}]: {remote_path}, 共 {len(files)} 项")
+        return {
+            "success": True,
+            "path": remote_path,
+            "files": files,
+            "total_count": len(files),
+            "connection": connection.name,
+            "error": None
+        }
+        
+    except ValueError as e:
+        error_msg = str(e)
+        logger.error(error_msg)
+        return {
+            "success": False,
+            "path": remote_path,
+            "files": [],
+            "total_count": 0,
+            "connection": connection_name,
+            "error": error_msg
+        }
+    except paramiko.AuthenticationException:
+        error_msg = "SSH认证失败，请检查用户名和密码/密钥"
+        logger.error(error_msg)
+        return {
+            "success": False,
+            "path": remote_path,
+            "files": [],
+            "total_count": 0,
+            "connection": connection_name,
+            "error": error_msg
+        }
+    except paramiko.SSHException as e:
+        error_msg = f"SSH连接错误: {str(e)}"
+        logger.error(error_msg)
+        return {
+            "success": False,
+            "path": remote_path,
+            "files": [],
+            "total_count": 0,
+            "connection": connection_name,
+            "error": error_msg
+        }
+    except Exception as e:
+        error_msg = f"获取目录列表失败: {str(e)}"
+        logger.error(error_msg)
+        return {
+            "success": False,
+            "path": remote_path,
+            "files": [],
+            "total_count": 0,
+            "connection": connection_name,
+            "error": error_msg
+        }
+    finally:
+        if sftp:
+            sftp.close()
+        if client:
+            client.close()
+
 def main():
     """主函数入口点"""
     try:
