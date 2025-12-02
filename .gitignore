@@ -136,3 +136,4 @@ exec_log.json
 .tmp/ 
 
 .claude
+logs/
