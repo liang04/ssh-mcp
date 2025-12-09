@@ -26,8 +26,17 @@ def load_env_file():
                         os.environ[key.strip()] = value.strip()
         logger.info(f"已加载配置文件: {env_file}")
 
+# 获取脚本所在目录的绝对路径
+SCRIPT_DIR = Path(__file__).parent.absolute()
+
 # 配置日志
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    filename=str(SCRIPT_DIR / 'ssh_server_debug.log'),
+    filemode='a',
+    encoding='utf-8'
+)
 logger = logging.getLogger(__name__)
 
 # 加载环境变量
@@ -41,7 +50,12 @@ class ExecLogManager:
     
     def __init__(self):
         self.save_log = os.getenv('SAVE_EXEC_LOG', 'false').lower() in ('true', '1', 'yes')
-        self.log_file = os.getenv('EXEC_LOG_FILE', 'exec_log.json')
+        log_file_name = os.getenv('EXEC_LOG_FILE', 'exec_log.json')
+        # 如果是相对路径，则将其解析为相对于脚本目录的路径
+        if not os.path.isabs(log_file_name):
+            self.log_file = str(SCRIPT_DIR / log_file_name)
+        else:
+            self.log_file = log_file_name
         self.lock = Lock()
         
         # 如果启用日志且文件不存在，初始化为空数组
