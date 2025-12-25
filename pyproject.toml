@@ -14,7 +14,8 @@ dev-dependencies = [
     "pytest-asyncio>=0.21.0",
 ]
 
-[[tool.uv.index]]
-name = "tsinghua"
-url = "https://pypi.tuna.tsinghua.edu.cn/simple"
-default = true
+# Optional: Configure PyPI mirror if needed
+# [[tool.uv.index]]
+# name = "mirror"
+# url = "https://pypi.your-mirror.com/simple"
+# default = true

@@ -377,8 +377,8 @@ ssh-mcp/
 ├── ssh_server.py          # 主服务器文件
 ├── .env.example           # 环境变量配置示例
 ├── pyproject.toml         # 项目配置
-├── setup.py              # 安装脚本
-└── README.md             # 项目文档
+├── LICENSE                # MIT 许可证
+└── README.md              # 项目文档
 ```
 
 ## 更新日志
