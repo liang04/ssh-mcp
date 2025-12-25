@@ -17,51 +17,20 @@
 
 ## 快速开始
 
-### 1. 克隆仓库
+### 方式一：使用 uvx（推荐，无需克隆）
 
-```bash
-git clone https://github.com/liang04/ssh-mcp.git
-cd ssh-mcp
-```
-
-### 2. 安装依赖
-
-**使用 uv（推荐）**：
-```bash
-pip install uv
-uv sync
-```
-
-**或使用 pip**：
-```bash
-pip install paramiko mcp
-```
-
-### 3. 配置 SSH 连接
-
-```bash
-# 复制配置示例
-cp .env.example .env
-
-# 编辑 .env 文件，填入实际的 SSH 连接信息
-```
-
-### 4. 配置 MCP 客户端
-
-根据您使用的 MCP 客户端选择对应的配置方式：
+直接在 MCP 客户端配置中使用 `uvx`，无需手动安装：
 
 #### Claude Desktop
 
-编辑 Claude Desktop 配置文件：
-- **Windows**: `%APPDATA%\Claude\claude_desktop_config.json`
-- **macOS**: `~/Library/Application Support/Claude/claude_desktop_config.json`
+编辑配置文件（Windows: `%APPDATA%\Claude\claude_desktop_config.json`，macOS: `~/Library/Application Support/Claude/claude_desktop_config.json`）：
 
 ```json
 {
   "mcpServers": {
     "ssh": {
-      "command": "uv",
-      "args": ["--directory", "/path/to/ssh-mcp", "run", "python", "ssh_server.py"],
+      "command": "uvx",
+      "args": ["mcp-ssh-server"],
       "env": {
         "SSH_PROD_HOST": "your-server.com",
         "SSH_PROD_USERNAME": "admin",
@@ -80,8 +49,8 @@ cp .env.example .env
 {
   "mcpServers": {
     "ssh": {
-      "command": "uv",
-      "args": ["--directory", "/path/to/ssh-mcp", "run", "python", "ssh_server.py"],
+      "command": "uvx",
+      "args": ["mcp-ssh-server"],
       "env": {
         "SSH_PROD_HOST": "your-server.com",
         "SSH_PROD_USERNAME": "admin",
@@ -92,7 +61,40 @@ cp .env.example .env
 }
 ```
 
-> **提示**：将 `/path/to/ssh-mcp` 替换为实际的仓库克隆路径，将 SSH 连接信息替换为您的实际配置。
+### 方式二：从源码安装
+
+```bash
+# 克隆仓库
+git clone https://github.com/liang04/ssh-mcp.git
+cd ssh-mcp
+
+# 使用 uv 安装
+pip install uv
+uv sync
+
+# 或使用 pip 安装
+pip install -e .
+```
+
+配置 MCP 客户端使用本地安装：
+
+```json
+{
+  "mcpServers": {
+    "ssh": {
+      "command": "uv",
+      "args": ["--directory", "/path/to/ssh-mcp", "run", "mcp-ssh-server"],
+      "env": {
+        "SSH_PROD_HOST": "your-server.com",
+        "SSH_PROD_USERNAME": "admin",
+        "SSH_PROD_PASSWORD": "your-password"
+      }
+    }
+  }
+}
+```
+
+> **提示**：将 SSH 连接信息替换为您的实际配置。支持通过环境变量配置多个连接，详见下方配置说明。
 
 ## 配置
 
