@@ -11,7 +11,11 @@ import time
 from threading import Lock
 from pathlib import Path
 
-# 加载 .env 文件（如果存在）
+# 获取当前工作目录作为日志和配置文件的基础路径
+# 使用 CWD 而不是脚本目录，使 uvx 运行时路径更直观
+WORKING_DIR = Path.cwd().absolute()
+
+# 加载 .env 文件（如果存在）- 必须在读取任何环境变量之前执行
 def load_env_file():
     """加载 .env 文件到环境变量"""
     # 优先从当前工作目录加载 .env
@@ -27,15 +31,16 @@ def load_env_file():
                 if line and not line.startswith('#') and '=' in line:
                     key, value = line.split('=', 1)
                     # 只有在环境变量未设置时才从 .env 文件读取
+                    # MCP 客户端 env > 系统环境变量 > .env 文件
                     if key.strip() not in os.environ:
                         os.environ[key.strip()] = value.strip()
-        logger.info(f"已加载配置文件: {env_file}")
+        return env_file
+    return None
 
-# 获取当前工作目录作为日志和配置文件的基础路径
-# 使用 CWD 而不是脚本目录，使 uvx 运行时路径更直观
-WORKING_DIR = Path.cwd().absolute()
+# 首先加载 .env 文件，确保后续所有环境变量读取都能获取到 .env 中的配置
+_loaded_env_file = load_env_file()
 
-# 配置日志 - 日志文件写入当前工作目录
+# 配置日志 - 现在可以从 .env 文件读取 SSH_MCP_LOG_FILE
 log_file_path = os.getenv('SSH_MCP_LOG_FILE', '')
 if log_file_path:
     # 如果指定了日志文件路径
@@ -56,8 +61,9 @@ else:
     )
 logger = logging.getLogger(__name__)
 
-# 加载环境变量
-load_env_file()
+# 记录 .env 加载情况
+if _loaded_env_file:
+    logger.info(f"已加载配置文件: {_loaded_env_file}")
 
 # 创建 MCP 服务器
 mcp = FastMCP(name="SSH Server", description="SSH连接管理和命令执行服务器")

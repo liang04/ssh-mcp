@@ -1,6 +1,6 @@
 [project]
 name = "mcp-ssh-server"
-version = "0.1.1"
+version = "0.1.2"
 description = "SSH MCP Server - 基于 Model Context Protocol 的 SSH 连接管理和命令执行服务器"
 readme = "README.md"
 license = {text = "MIT"}
