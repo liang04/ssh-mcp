@@ -14,8 +14,13 @@ from pathlib import Path
 # 加载 .env 文件（如果存在）
 def load_env_file():
     """加载 .env 文件到环境变量"""
-    env_file = Path(__file__).parent / '.env'
-    if env_file.exists():
+    # 优先从当前工作目录加载 .env
+    cwd_env = Path.cwd() / '.env'
+    pkg_env = Path(__file__).parent / '.env'
+    
+    env_file = cwd_env if cwd_env.exists() else (pkg_env if pkg_env.exists() else None)
+    
+    if env_file and env_file.exists():
         with open(env_file, 'r', encoding='utf-8') as f:
             for line in f:
                 line = line.strip()
@@ -26,17 +31,29 @@ def load_env_file():
                         os.environ[key.strip()] = value.strip()
         logger.info(f"已加载配置文件: {env_file}")
 
-# 获取脚本所在目录的绝对路径
-SCRIPT_DIR = Path(__file__).parent.absolute()
+# 获取当前工作目录作为日志和配置文件的基础路径
+# 使用 CWD 而不是脚本目录，使 uvx 运行时路径更直观
+WORKING_DIR = Path.cwd().absolute()
 
-# 配置日志
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    filename=str(SCRIPT_DIR / 'ssh_server_debug.log'),
-    filemode='a',
-    encoding='utf-8'
-)
+# 配置日志 - 日志文件写入当前工作目录
+log_file_path = os.getenv('SSH_MCP_LOG_FILE', '')
+if log_file_path:
+    # 如果指定了日志文件路径
+    if not os.path.isabs(log_file_path):
+        log_file_path = str(WORKING_DIR / log_file_path)
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+        filename=log_file_path,
+        filemode='a',
+        encoding='utf-8'
+    )
+else:
+    # 默认不写入文件，只输出到 stderr
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    )
 logger = logging.getLogger(__name__)
 
 # 加载环境变量
@@ -51,9 +68,9 @@ class ExecLogManager:
     def __init__(self):
         self.save_log = os.getenv('SAVE_EXEC_LOG', 'false').lower() in ('true', '1', 'yes')
         log_file_name = os.getenv('EXEC_LOG_FILE', 'exec_log.json')
-        # 如果是相对路径，则将其解析为相对于脚本目录的路径
+        # 如果是相对路径，则将其解析为相对于当前工作目录的路径（而不是脚本目录）
         if not os.path.isabs(log_file_name):
-            self.log_file = str(SCRIPT_DIR / log_file_name)
+            self.log_file = str(WORKING_DIR / log_file_name)
         else:
             self.log_file = log_file_name
         self.lock = Lock()

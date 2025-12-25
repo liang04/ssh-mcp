@@ -150,10 +150,20 @@ SSH_PORT=22  # 可选，默认为22
 
 ### 日志配置（可选）
 
+日志路径默认基于**当前工作目录**，支持相对路径和绝对路径。
+
 ```bash
-SAVE_EXEC_LOG=false
-EXEC_LOG_FILE=exec_log.json
+# 命令执行日志
+SAVE_EXEC_LOG=true                    # 是否保存命令执行日志
+EXEC_LOG_FILE=logs/exec_log.json      # 相对路径（基于 CWD）
+# 或使用绝对路径
+EXEC_LOG_FILE=/var/log/ssh-mcp/exec_log.json
+
+# 调试日志（可选，默认不写入文件）
+SSH_MCP_LOG_FILE=logs/debug.log       # 设置后才会写入文件
 ```
+
+> **注意**：通过 `uvx` 运行时，相对路径基于 MCP 客户端的启动目录。建议使用**绝对路径**以确保日志位置可预测。
 
 ## 可用工具
 
