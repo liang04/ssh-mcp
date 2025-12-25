@@ -138,3 +138,5 @@ exec_log.json
 .claude
 logs/
 startup_output.txt
+
+.mcp.json
