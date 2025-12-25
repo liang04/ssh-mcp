@@ -66,7 +66,8 @@ if _loaded_env_file:
     logger.info(f"已加载配置文件: {_loaded_env_file}")
 
 # 创建 MCP 服务器
-mcp = FastMCP(name="SSH Server", description="SSH连接管理和命令执行服务器")
+# 注意：不同版本的 mcp 库 FastMCP 参数可能不同，只使用 name 参数
+mcp = FastMCP(name="SSH Server")
 
 class ExecLogManager:
     """命令执行日志管理类"""
