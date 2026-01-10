@@ -346,13 +346,16 @@ def list_ssh_connections() -> Dict[str, Any]:
     }
 
 @mcp.tool()
-def execute_command(command: str, timeout: int = 30, connection_name: Optional[str] = None) -> Dict[str, Any]:
+def execute_command(command: str, timeout: int = 30, max_output_size: int = 8192, connection_name: Optional[str] = None) -> Dict[str, Any]:
     """
     在远程服务器上执行shell命令
     
     Args:
         command: 要执行的shell命令
         timeout: 命令执行超时时间（秒），默认30秒
+        max_output_size: 最大输出大小（字节），默认8192（8KB）。
+                        设置为0表示不限制（注意可能导致内存问题）。
+                        超过限制的输出会被截断。
         connection_name: SSH连接名称，如果不指定则使用默认连接
     
     Returns:
@@ -361,6 +364,7 @@ def execute_command(command: str, timeout: int = 30, connection_name: Optional[s
         - exit_code: 命令退出码
         - stdout: 标准输出
         - stderr: 标准错误输出
+        - truncated: 输出是否被截断
         - error: 错误信息（如果有）
         - connection: 使用的连接名称
     """
@@ -375,19 +379,51 @@ def execute_command(command: str, timeout: int = 30, connection_name: Optional[s
         
         # 等待命令完成并获取结果
         exit_code = stdout.channel.recv_exit_status()
-        stdout_data = stdout.read().decode('utf-8', errors='replace')
-        stderr_data = stderr.read().decode('utf-8', errors='replace')
+        
+        # 分块读取输出，避免大输出导致卡死
+        truncated = False
+        
+        def read_with_limit(stream, limit: int) -> tuple[str, bool]:
+            """分块读取流，限制最大大小"""
+            if limit <= 0:  # 不限制
+                return stream.read().decode('utf-8', errors='replace'), False
+            
+            data = b""
+            was_truncated = False
+            chunk_size = min(4096, limit)  # 每次读取最多4KB
+            
+            while len(data) < limit:
+                chunk = stream.read(chunk_size)
+                if not chunk:
+                    break
+                data += chunk
+            
+            # 检查是否还有更多数据（被截断）
+            if stream.read(1):
+                was_truncated = True
+            
+            return data.decode('utf-8', errors='replace'), was_truncated
+        
+        stdout_data, stdout_truncated = read_with_limit(stdout, max_output_size)
+        stderr_data, stderr_truncated = read_with_limit(stderr, max_output_size)
+        truncated = stdout_truncated or stderr_truncated
+        
+        if stdout_truncated:
+            stdout_data += f"\n... [标准输出已截断，超过 {max_output_size} 字节限制]"
+        if stderr_truncated:
+            stderr_data += f"\n... [标准错误已截断，超过 {max_output_size} 字节限制]"
         
         result = {
             "success": exit_code == 0,
             "exit_code": exit_code,
             "stdout": stdout_data,
             "stderr": stderr_data,
+            "truncated": truncated,
             "error": None,
             "connection": connection.name
         }
         
-        logger.info(f"命令执行完成 [{connection.name}]: '{command}', 退出码: {exit_code}")
+        logger.info(f"命令执行完成 [{connection.name}]: '{command}', 退出码: {exit_code}, 截断: {truncated}")
         log_manager.save_execution_log(command, result)
         return result
         
@@ -525,7 +561,7 @@ def check_ssh_connection(connection_name: Optional[str] = None) -> Dict[str, Any
             client.close()
 
 @mcp.tool()
-def execute_interactive_command(command: str, input_data: str = "", timeout: int = 30, connection_name: Optional[str] = None) -> Dict[str, Any]:
+def execute_interactive_command(command: str, input_data: str = "", timeout: int = 30, max_output_size: int = 8192, connection_name: Optional[str] = None) -> Dict[str, Any]:
     """
     执行交互式命令（可以发送输入数据）
     
@@ -533,6 +569,9 @@ def execute_interactive_command(command: str, input_data: str = "", timeout: int
         command: 要执行的shell命令
         input_data: 要发送给命令的输入数据
         timeout: 命令执行超时时间（秒），默认30秒
+        max_output_size: 最大输出大小（字节），默认8192（8KB）。
+                        设置为0表示不限制（注意可能导致内存问题）。
+                        超过限制的输出会被截断。
         connection_name: SSH连接名称，如果不指定则使用默认连接
     
     Returns:
@@ -557,19 +596,51 @@ def execute_interactive_command(command: str, input_data: str = "", timeout: int
         
         # 等待命令完成并获取结果
         exit_code = stdout.channel.recv_exit_status()
-        stdout_data = stdout.read().decode('utf-8', errors='replace')
-        stderr_data = stderr.read().decode('utf-8', errors='replace')
+        
+        # 分块读取输出，避免大输出导致卡死
+        truncated = False
+        
+        def read_with_limit(stream, limit: int) -> tuple[str, bool]:
+            """分块读取流，限制最大大小"""
+            if limit <= 0:  # 不限制
+                return stream.read().decode('utf-8', errors='replace'), False
+            
+            data = b""
+            was_truncated = False
+            chunk_size = min(4096, limit)  # 每次读取最多4KB
+            
+            while len(data) < limit:
+                chunk = stream.read(chunk_size)
+                if not chunk:
+                    break
+                data += chunk
+            
+            # 检查是否还有更多数据（被截断）
+            if stream.read(1):
+                was_truncated = True
+            
+            return data.decode('utf-8', errors='replace'), was_truncated
+        
+        stdout_data, stdout_truncated = read_with_limit(stdout, max_output_size)
+        stderr_data, stderr_truncated = read_with_limit(stderr, max_output_size)
+        truncated = stdout_truncated or stderr_truncated
+        
+        if stdout_truncated:
+            stdout_data += f"\n... [标准输出已截断，超过 {max_output_size} 字节限制]"
+        if stderr_truncated:
+            stderr_data += f"\n... [标准错误已截断，超过 {max_output_size} 字节限制]"
         
         result = {
             "success": exit_code == 0,
             "exit_code": exit_code,
             "stdout": stdout_data,
             "stderr": stderr_data,
+            "truncated": truncated,
             "error": None,
             "connection": connection.name
         }
         
-        logger.info(f"交互式命令执行完成 [{connection.name}]: '{command}', 退出码: {exit_code}")
+        logger.info(f"交互式命令执行完成 [{connection.name}]: '{command}', 退出码: {exit_code}, 截断: {truncated}")
         log_manager.save_execution_log(command, result)
         return result
         
