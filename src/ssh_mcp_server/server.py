@@ -8,7 +8,8 @@ import io
 import logging
 import json
 import time
-from threading import Lock
+import socket
+from threading import Lock, Thread
 from pathlib import Path
 
 # 获取当前工作目录作为日志和配置文件的基础路径
@@ -377,35 +378,83 @@ def execute_command(command: str, timeout: int = 30, max_output_size: int = 8192
         # 执行命令
         stdin, stdout, stderr = client.exec_command(command, timeout=timeout)
         
-        # 等待命令完成并获取结果
+        # 用于存储读取结果的容器
+        # 格式: [data_string, truncated_boolean]
+        stdout_result = ["", False]
+        stderr_result = ["", False]
+        
+        def read_stream_thread(stream, limit: int, result_container):
+            """在单独线程中读取流，避免阻塞"""
+            try:
+                data_chunks = []
+                total_len = 0
+                was_truncated = False
+                
+                while True:
+                    # 读取数据块
+                    # 注意：Paramiko的read可能会阻塞，直到有数据或流关闭
+                    try:
+                        chunk = stream.read(4096)
+                    except socket.timeout:
+                        # exec_command(timeout=...) 会让 Channel.read 可能抛出 socket.timeout。
+                        # 这不是“命令结束”，只代表当前时间片没有数据可读。
+                        # 若此时退出线程，会停止 drain，重新引入死锁风险。
+                        if getattr(stream, "channel", None) and stream.channel.exit_status_ready():
+                            break
+                        time.sleep(0.05)
+                        continue
+                    if not chunk:
+                        break
+                    
+                    if limit <= 0:
+                        # 无限制模式
+                        data_chunks.append(chunk)
+                    elif total_len < limit:
+                        # 限制模式，且未达到限制
+                        if total_len + len(chunk) > limit:
+                            # 当前块导致超限
+                            needed = limit - total_len
+                            data_chunks.append(chunk[:needed])
+                            total_len += needed
+                            was_truncated = True
+                            # 注意：即使截断，我们必须继续循环读取剩余内容以清空缓冲区（drain），
+                            # 否则远程进程会阻塞
+                        else:
+                            data_chunks.append(chunk)
+                            total_len += len(chunk)
+                    else:
+                        # 已达到限制，只读取不保存（drain）
+                        was_truncated = True
+                
+                result_container[0] = b"".join(data_chunks).decode('utf-8', errors='replace')
+                result_container[1] = was_truncated
+            except Exception as e:
+                logger.error(f"读取流时发生错误: {e}")
+                # 确保容器至少有一个可用值，避免调用方拿到默认值而误判
+                result_container[0] = b"".join(data_chunks).decode('utf-8', errors='replace') if 'data_chunks' in locals() else ""
+                result_container[1] = True
+                
+        # 启动线程读取 stdout 和 stderr
+        # 这对于防止死锁至关重要：如果我们等待 recv_exit_status 而不读取，
+        # 且输出填满了 OS 缓冲区，远程进程就会挂起。
+        t_stdout = Thread(target=read_stream_thread, args=(stdout, max_output_size, stdout_result), daemon=True)
+        t_stderr = Thread(target=read_stream_thread, args=(stderr, max_output_size, stderr_result), daemon=True)
+        
+        t_stdout.start()
+        t_stderr.start()
+        
+        # 等待命令完成
+        # 注意：这里我们首先等待命令结束，然后等待线程结束。
+        # 或者我们可以先 join 线程（因为线程会在流关闭时结束，而流会在命令结束时关闭）。
+        # 更安全的做法是先获取退出状态，但前提是必须由其它机制（我们的线程）不断消耗输出。
         exit_code = stdout.channel.recv_exit_status()
         
-        # 分块读取输出，避免大输出导致卡死
-        truncated = False
+        # 等待读取完成
+        t_stdout.join()
+        t_stderr.join()
         
-        def read_with_limit(stream, limit: int) -> tuple[str, bool]:
-            """分块读取流，限制最大大小"""
-            if limit <= 0:  # 不限制
-                return stream.read().decode('utf-8', errors='replace'), False
-            
-            data = b""
-            was_truncated = False
-            chunk_size = min(4096, limit)  # 每次读取最多4KB
-            
-            while len(data) < limit:
-                chunk = stream.read(chunk_size)
-                if not chunk:
-                    break
-                data += chunk
-            
-            # 检查是否还有更多数据（被截断）
-            if stream.read(1):
-                was_truncated = True
-            
-            return data.decode('utf-8', errors='replace'), was_truncated
-        
-        stdout_data, stdout_truncated = read_with_limit(stdout, max_output_size)
-        stderr_data, stderr_truncated = read_with_limit(stderr, max_output_size)
+        stdout_data, stdout_truncated = stdout_result
+        stderr_data, stderr_truncated = stderr_result
         truncated = stdout_truncated or stderr_truncated
         
         if stdout_truncated:
@@ -594,35 +643,65 @@ def execute_interactive_command(command: str, input_data: str = "", timeout: int
         # 关闭stdin以表示输入结束
         stdin.close()
         
-        # 等待命令完成并获取结果
+        # 用于存储读取结果的容器
+        stdout_result = ["", False]
+        stderr_result = ["", False]
+        
+        def read_stream_thread(stream, limit: int, result_container):
+            """在单独线程中读取流，避免阻塞"""
+            try:
+                data_chunks = []
+                total_len = 0
+                was_truncated = False
+                
+                while True:
+                    try:
+                        chunk = stream.read(4096)
+                    except socket.timeout:
+                        if getattr(stream, "channel", None) and stream.channel.exit_status_ready():
+                            break
+                        time.sleep(0.05)
+                        continue
+                    if not chunk:
+                        break
+                    
+                    if limit <= 0:
+                        data_chunks.append(chunk)
+                    elif total_len < limit:
+                        if total_len + len(chunk) > limit:
+                            needed = limit - total_len
+                            data_chunks.append(chunk[:needed])
+                            total_len += needed
+                            was_truncated = True
+                        else:
+                            data_chunks.append(chunk)
+                            total_len += len(chunk)
+                    else:
+                        was_truncated = True
+                
+                result_container[0] = b"".join(data_chunks).decode('utf-8', errors='replace')
+                result_container[1] = was_truncated
+            except Exception as e:
+                logger.error(f"读取流时发生错误: {e}")
+                result_container[0] = b"".join(data_chunks).decode('utf-8', errors='replace') if 'data_chunks' in locals() else ""
+                result_container[1] = True
+                
+        # 启动线程读取
+        t_stdout = Thread(target=read_stream_thread, args=(stdout, max_output_size, stdout_result), daemon=True)
+        t_stderr = Thread(target=read_stream_thread, args=(stderr, max_output_size, stderr_result), daemon=True)
+        
+        t_stdout.start()
+        t_stderr.start()
+        
+        # 等待命令完成
         exit_code = stdout.channel.recv_exit_status()
         
-        # 分块读取输出，避免大输出导致卡死
-        truncated = False
+        # 等待读取完成
+        t_stdout.join()
+        t_stderr.join()
         
-        def read_with_limit(stream, limit: int) -> tuple[str, bool]:
-            """分块读取流，限制最大大小"""
-            if limit <= 0:  # 不限制
-                return stream.read().decode('utf-8', errors='replace'), False
-            
-            data = b""
-            was_truncated = False
-            chunk_size = min(4096, limit)  # 每次读取最多4KB
-            
-            while len(data) < limit:
-                chunk = stream.read(chunk_size)
-                if not chunk:
-                    break
-                data += chunk
-            
-            # 检查是否还有更多数据（被截断）
-            if stream.read(1):
-                was_truncated = True
-            
-            return data.decode('utf-8', errors='replace'), was_truncated
-        
-        stdout_data, stdout_truncated = read_with_limit(stdout, max_output_size)
-        stderr_data, stderr_truncated = read_with_limit(stderr, max_output_size)
+        stdout_data, stdout_truncated = stdout_result
+        stderr_data, stderr_truncated = stderr_result
         truncated = stdout_truncated or stderr_truncated
         
         if stdout_truncated:
