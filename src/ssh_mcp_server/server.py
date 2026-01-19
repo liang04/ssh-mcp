@@ -386,9 +386,21 @@ def execute_command(command: str, timeout: int = 30, max_output_size: int = 8192
         def read_stream_thread(stream, limit: int, result_container):
             """在单独线程中读取流，避免阻塞"""
             try:
-                data_chunks = []
+                # Head + Tail（各一半）
+                # - limit <= 0: 不限制，读取全部
+                # - limit  > 0: 保留 head_limit + tail_limit，丢弃中间并持续 drain
                 total_len = 0
                 was_truncated = False
+                dropped_bytes = 0
+
+                if limit <= 0:
+                    data_chunks = []
+                else:
+                    head_limit = limit // 2
+                    tail_limit = limit - head_limit
+                    head_chunks = []
+                    head_len = 0
+                    tail_buf = bytearray()
                 
                 while True:
                     # 读取数据块
@@ -406,27 +418,53 @@ def execute_command(command: str, timeout: int = 30, max_output_size: int = 8192
                     if not chunk:
                         break
                     
+                    chunk_len = len(chunk)
+                    total_len += chunk_len
+
                     if limit <= 0:
                         # 无限制模式
                         data_chunks.append(chunk)
-                    elif total_len < limit:
-                        # 限制模式，且未达到限制
-                        if total_len + len(chunk) > limit:
-                            # 当前块导致超限
-                            needed = limit - total_len
-                            data_chunks.append(chunk[:needed])
-                            total_len += needed
-                            was_truncated = True
-                            # 注意：即使截断，我们必须继续循环读取剩余内容以清空缓冲区（drain），
-                            # 否则远程进程会阻塞
+                        continue
+
+                    # 先写 head（只写满为止）
+                    if head_limit > 0 and head_len < head_limit:
+                        need = head_limit - head_len
+                        if chunk_len <= need:
+                            head_chunks.append(chunk)
+                            head_len += chunk_len
                         else:
-                            data_chunks.append(chunk)
-                            total_len += len(chunk)
-                    else:
-                        # 已达到限制，只读取不保存（drain）
+                            head_chunks.append(chunk[:need])
+                            head_len += need
+
+                    # 再维护 tail（始终保留最后 tail_limit 字节）
+                    if tail_limit > 0:
+                        tail_buf.extend(chunk)
+                        if len(tail_buf) > tail_limit:
+                            del tail_buf[:-tail_limit]
+
+                    if total_len > limit:
                         was_truncated = True
                 
-                result_container[0] = b"".join(data_chunks).decode('utf-8', errors='replace')
+                if limit <= 0:
+                    output_bytes = b"".join(data_chunks)
+                else:
+                    head_bytes = b"".join(head_chunks)
+                    tail_bytes = bytes(tail_buf)
+
+                    if total_len <= limit:
+                        # 未超限：用 head+tail 恢复完整输出（去掉重叠部分）
+                        overlap = max(0, len(head_bytes) + len(tail_bytes) - total_len)
+                        output_bytes = head_bytes + tail_bytes[overlap:]
+                    else:
+                        # 超限：head + marker + tail
+                        dropped_bytes = max(0, total_len - len(head_bytes) - len(tail_bytes))
+                        marker = (
+                            f"\n... [输出已截断：保留前 {head_limit} 字节 + 后 {tail_limit} 字节，"
+                            f"丢弃 {dropped_bytes} 字节] ...\n"
+                        ).encode("utf-8")
+                        output_bytes = head_bytes + marker + tail_bytes
+
+                result_container[0] = output_bytes.decode('utf-8', errors='replace')
                 result_container[1] = was_truncated
             except Exception as e:
                 logger.error(f"读取流时发生错误: {e}")
@@ -457,10 +495,7 @@ def execute_command(command: str, timeout: int = 30, max_output_size: int = 8192
         stderr_data, stderr_truncated = stderr_result
         truncated = stdout_truncated or stderr_truncated
         
-        if stdout_truncated:
-            stdout_data += f"\n... [标准输出已截断，超过 {max_output_size} 字节限制]"
-        if stderr_truncated:
-            stderr_data += f"\n... [标准错误已截断，超过 {max_output_size} 字节限制]"
+        # 具体截断提示已在 read_stream_thread 内嵌入到输出内容中
         
         result = {
             "success": exit_code == 0,
@@ -650,9 +685,18 @@ def execute_interactive_command(command: str, input_data: str = "", timeout: int
         def read_stream_thread(stream, limit: int, result_container):
             """在单独线程中读取流，避免阻塞"""
             try:
-                data_chunks = []
                 total_len = 0
                 was_truncated = False
+                dropped_bytes = 0
+
+                if limit <= 0:
+                    data_chunks = []
+                else:
+                    head_limit = limit // 2
+                    tail_limit = limit - head_limit
+                    head_chunks = []
+                    head_len = 0
+                    tail_buf = bytearray()
                 
                 while True:
                     try:
@@ -665,21 +709,48 @@ def execute_interactive_command(command: str, input_data: str = "", timeout: int
                     if not chunk:
                         break
                     
+                    chunk_len = len(chunk)
+                    total_len += chunk_len
+
                     if limit <= 0:
                         data_chunks.append(chunk)
-                    elif total_len < limit:
-                        if total_len + len(chunk) > limit:
-                            needed = limit - total_len
-                            data_chunks.append(chunk[:needed])
-                            total_len += needed
-                            was_truncated = True
+                        continue
+
+                    if head_limit > 0 and head_len < head_limit:
+                        need = head_limit - head_len
+                        if chunk_len <= need:
+                            head_chunks.append(chunk)
+                            head_len += chunk_len
                         else:
-                            data_chunks.append(chunk)
-                            total_len += len(chunk)
-                    else:
+                            head_chunks.append(chunk[:need])
+                            head_len += need
+
+                    if tail_limit > 0:
+                        tail_buf.extend(chunk)
+                        if len(tail_buf) > tail_limit:
+                            del tail_buf[:-tail_limit]
+
+                    if total_len > limit:
                         was_truncated = True
                 
-                result_container[0] = b"".join(data_chunks).decode('utf-8', errors='replace')
+                if limit <= 0:
+                    output_bytes = b"".join(data_chunks)
+                else:
+                    head_bytes = b"".join(head_chunks)
+                    tail_bytes = bytes(tail_buf)
+
+                    if total_len <= limit:
+                        overlap = max(0, len(head_bytes) + len(tail_bytes) - total_len)
+                        output_bytes = head_bytes + tail_bytes[overlap:]
+                    else:
+                        dropped_bytes = max(0, total_len - len(head_bytes) - len(tail_bytes))
+                        marker = (
+                            f"\n... [输出已截断：保留前 {head_limit} 字节 + 后 {tail_limit} 字节，"
+                            f"丢弃 {dropped_bytes} 字节] ...\n"
+                        ).encode("utf-8")
+                        output_bytes = head_bytes + marker + tail_bytes
+
+                result_container[0] = output_bytes.decode('utf-8', errors='replace')
                 result_container[1] = was_truncated
             except Exception as e:
                 logger.error(f"读取流时发生错误: {e}")
@@ -704,10 +775,7 @@ def execute_interactive_command(command: str, input_data: str = "", timeout: int
         stderr_data, stderr_truncated = stderr_result
         truncated = stdout_truncated or stderr_truncated
         
-        if stdout_truncated:
-            stdout_data += f"\n... [标准输出已截断，超过 {max_output_size} 字节限制]"
-        if stderr_truncated:
-            stderr_data += f"\n... [标准错误已截断，超过 {max_output_size} 字节限制]"
+        # 具体截断提示已在 read_stream_thread 内嵌入到输出内容中
         
         result = {
             "success": exit_code == 0,
